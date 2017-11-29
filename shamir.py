@@ -112,3 +112,6 @@ def test():
     print timeit.timeit(
         lambda: recover_secret(make_random_shares(4, 8)[1]),
         number=1000) * 1000
+
+    # this code is made available to the public domain under the terms of the CC0 license
+    # https://creativecommons.org/publicdomain/zero/1.0/
