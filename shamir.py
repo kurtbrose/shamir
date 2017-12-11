@@ -1,3 +1,4 @@
+from __future__ import division
 import random
 import functools
 
@@ -47,7 +48,7 @@ def _extended_gcd(a, b):
     y = 1
     last_y = 0
     while b != 0:
-        quot = a / b
+        quot = a // b
         a, b = b,  a%b
         x, last_x = last_x - quot * x, x
         y, last_y = last_y - quot * y, y
@@ -102,16 +103,13 @@ def recover_secret(shares, prime=_PRIME):
 
 
 def test():
+    'round trip a bunch of times; returns encrypt+decrypt time in microseconds'
     for i in range(2, 20):
         for j in range(i, i * 2):
             secret, shares = make_random_shares(i, j)
             assert recover_secret(random.sample(shares, i)) == secret
             assert recover_secret(shares) == secret
-            print '.',
     import timeit
-    print timeit.timeit(
+    return timeit.timeit(
         lambda: recover_secret(make_random_shares(4, 8)[1]),
         number=1000) * 1000
-
-    # this code is made available to the public domain under the terms of the CC0 license
-    # https://creativecommons.org/publicdomain/zero/1.0/
