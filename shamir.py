@@ -1,3 +1,11 @@
+'''
+An implementation of shamir secret sharing algorithm.
+
+This code is made available under the terms of the
+CC0 license and OWFa.
+
+(TLDR; you can do whatever you want with it.)
+'''
 from __future__ import division
 import random
 import functools
