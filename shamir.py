@@ -1,10 +1,14 @@
 '''
 An implementation of shamir secret sharing algorithm.
 
-This code is made available under the terms of the
-CC0 license and OWFa.
+To the extent possible under law,
+all copyright and related or neighboring rights
+are hereby waived.  (CC0, see LICENSE file.)
 
-(TLDR; you can do whatever you want with it.)
+All possible patents arising from this code
+are renounced under the terms of
+the Open Web Foundation CLA 1.0
+(http://www.openwebfoundation.org/legal/the-owf-1-0-agreements/owfa-1-0)
 '''
 from __future__ import division
 import random
