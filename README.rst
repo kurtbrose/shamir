@@ -20,6 +20,7 @@ how to use it
 '''''''''''''
 
 .. code-block:: python
+
     secret, shares = make_random_secret(3, 5)
     # generate shares such that 3 of 5 can recover the secret
     secret = recover_secret(shares)
@@ -30,6 +31,7 @@ and the secret it stores is a random integer.  To be useful, it must be
 combined with other algorithms.  Here's a high level example:
 
 .. code-block:: python
+
     # encrypt, decrypt, hash, and kdf are external functions
 
     def two_of_three_encrypt(plaintext, pw0, pw1, pw2):
