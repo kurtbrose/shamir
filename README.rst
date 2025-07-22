@@ -72,3 +72,10 @@ GF(256).  Shares are the same length as the input data.
 
     shares = shamir.make_byte_shares(2, 3, b'super secret')
     assert shamir.recover_secret_bytes(shares[:2]) == b'super secret'
+
+NumPy may be installed to enable a faster implementation for these byte
+operations:
+
+.. code-block:: bash
+
+    pip install 'shamir[numpy]'

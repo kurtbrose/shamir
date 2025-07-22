@@ -15,6 +15,12 @@ import os
 import random
 import functools
 
+try:
+    import numpy as np
+    HAVE_NUMPY = True
+except Exception:  # pragma: no cover - optional dependency
+    HAVE_NUMPY = False
+
 # GF(256) tables will be computed at import time for the byte-based API
 _GF256_EXP = [0] * 512
 _GF256_LOG = [0] * 256
@@ -59,6 +65,16 @@ _PRIME = 2**127 - 1
 
 _rint = functools.partial(random.SystemRandom().randint, 0)
 
+if HAVE_NUMPY:
+    _GF256_EXP_ARR = np.array(_GF256_EXP, dtype=np.uint8)
+    _GF256_LOG_ARR = np.array(_GF256_LOG, dtype=np.uint16)
+    _GF256_MUL_TABLE = np.empty((256, 256), dtype=np.uint8)
+    for i in range(256):
+        for j in range(256):
+            _GF256_MUL_TABLE[i, j] = (
+                _GF256_EXP[_GF256_LOG[i] + _GF256_LOG[j]] if i and j else 0
+            )
+
 
 def _gf256_mul(a, b):
     'multiply two numbers in GF(256) using log tables'
@@ -79,6 +95,57 @@ def _gf256_div(num, den):
     if num == 0:
         return 0
     return _gf256_mul(num, _gf256_inv(den))
+
+
+if HAVE_NUMPY:
+    def _gf256_mul_numpy(a, b):
+        return _GF256_MUL_TABLE[a, b]
+
+
+    def _gf256_inv_numpy(a):
+        if np.any(a == 0):
+            raise ZeroDivisionError('inverse of 0')
+        return _GF256_EXP_ARR[255 - _GF256_LOG_ARR[a]]
+
+
+    def _gf256_div_numpy(num, den):
+        return _gf256_mul_numpy(num, _gf256_inv_numpy(den))
+
+
+    def _gf256_pow_numpy(base, exps):
+        base = np.asarray(base, dtype=np.uint8)
+        exps = np.asarray(exps, dtype=np.uint16)
+        logs = _GF256_LOG_ARR[base]
+        result = _GF256_EXP_ARR[(logs[..., None] * exps) % 255]
+        result = np.where(base[..., None] == 0, 0, result)
+        result = np.where(exps == 0, 1, result)
+        return result.astype(np.uint8)
+
+    def _polys_eval_at_numpy(polys, x):
+        exps = np.arange(polys.shape[1]-1, -1, -1, dtype=np.uint16)
+        xpows = _gf256_pow_numpy(np.uint8(x), exps)
+        mul = _gf256_mul_numpy(polys, xpows)
+        return np.bitwise_xor.reduce(mul, axis=1)
+
+
+    def _gf256_prod_numpy(arr, axis=0):
+        res = arr.take(0, axis=axis).copy()
+        for idx in range(1, arr.shape[axis]):
+            res = _gf256_mul_numpy(res, arr.take(idx, axis=axis))
+        return res
+
+    def _gf256_lagrange_interpolate_numpy(x, x_s, y_s):
+        k = len(x_s)
+        assert k == len(set(int(v) for v in x_s)), 'points must be distinct'
+        x_diff = np.bitwise_xor(x_s, np.uint8(x))
+        x_mat = np.tile(x_diff, (k, 1))
+        diff_mat = x_s[:, None] ^ x_s[None, :]
+        np.fill_diagonal(x_mat, 1)
+        np.fill_diagonal(diff_mat, 1)
+        num = _gf256_prod_numpy(x_mat, axis=1)
+        den = _gf256_prod_numpy(diff_mat, axis=1)
+        terms = _gf256_mul_numpy(y_s, _gf256_div_numpy(num, den))
+        return np.bitwise_xor.reduce(terms)
 
 
 def _gf256_eval_at(poly, x):
@@ -197,22 +264,40 @@ def recover_secret(shares, prime=_PRIME):
 
 def make_byte_shares(minimum, shares, secret):
     '''split a bytes object into share points using GF(256)'''
-    if minimum > shares:
-        raise ValueError('pool secret would be irrecoverable')
-    if not isinstance(secret, (bytes, bytearray)):
-        secret = bytes(secret)
-    secret = bytearray(secret)
-    polys = [
-        [b] + list(os.urandom(minimum - 1))
-        for b in secret
-    ]
-    points = []
-    for x in range(1, shares + 1):
-        share = bytearray(len(secret))
-        for idx, poly in enumerate(polys):
-            share[idx] = _gf256_eval_at(poly, x)
-        points.append((x, bytes(share)))
-    return points
+    if HAVE_NUMPY:
+        if minimum > shares:
+            raise ValueError('pool secret would be irrecoverable')
+        if not isinstance(secret, (bytes, bytearray)):
+            secret = bytes(secret)
+        data = np.frombuffer(secret, dtype=np.uint8)
+        polys = np.empty((len(data), minimum), dtype=np.uint8)
+        polys[:, 0] = data
+        if minimum > 1:
+            polys[:, 1:] = np.frombuffer(
+                os.urandom(len(data) * (minimum - 1)), dtype=np.uint8
+            ).reshape(len(data), minimum - 1)
+        points = []
+        for x in range(1, shares + 1):
+            share = _polys_eval_at_numpy(polys, x)
+            points.append((x, share.tobytes()))
+        return points
+    else:
+        if minimum > shares:
+            raise ValueError('pool secret would be irrecoverable')
+        if not isinstance(secret, (bytes, bytearray)):
+            secret = bytes(secret)
+        secret = bytearray(secret)
+        polys = [
+            [b] + list(os.urandom(minimum - 1))
+            for b in secret
+        ]
+        points = []
+        for x in range(1, shares + 1):
+            share = bytearray(len(secret))
+            for idx, poly in enumerate(polys):
+                share[idx] = _gf256_eval_at(poly, x)
+            points.append((x, bytes(share)))
+        return points
 
 
 def recover_secret_bytes(shares):
@@ -223,7 +308,15 @@ def recover_secret_bytes(shares):
     length = len(y_s_bytes[0])
     if any(len(b) != length for b in y_s_bytes):
         raise ValueError('inconsistent share lengths')
-    secret = bytearray(length)
-    for i in range(length):
-        secret[i] = _gf256_lagrange_interpolate(0, x_s, [b[i] for b in y_s_bytes])
-    return bytes(secret)
+    if HAVE_NUMPY:
+        x_arr = np.frombuffer(bytearray(x_s), dtype=np.uint8)
+        y_arr = np.vstack([
+            np.frombuffer(b, dtype=np.uint8) for b in y_s_bytes
+        ])
+        secret = _gf256_lagrange_interpolate_numpy(0, x_arr, y_arr)
+        return secret.tobytes()
+    else:
+        secret = bytearray(length)
+        for i in range(length):
+            secret[i] = _gf256_lagrange_interpolate(0, x_s, [b[i] for b in y_s_bytes])
+        return bytes(secret)

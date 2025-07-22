@@ -9,4 +9,5 @@ setup(
     decription="fast, secure, pure python shamir's secret sharing",
     long_description = open('README.rst').read(),
     py_modules=['shamir'],
+    extras_require={'numpy': ['numpy']},
 )
