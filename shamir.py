@@ -227,27 +227,3 @@ def recover_secret_bytes(shares):
     for i in range(length):
         secret[i] = _gf256_lagrange_interpolate(0, x_s, [b[i] for b in y_s_bytes])
     return bytes(secret)
-
-
-def test():
-    'round trip a bunch of times; returns encrypt+decrypt time in microseconds'
-    for i in range(2, 20):
-        for j in range(i, i * 2):
-            secret, shares = make_random_shares(i, j)
-            assert recover_secret(random.sample(shares, i)) == secret
-            assert recover_secret(shares) == secret
-    import timeit
-    return timeit.timeit(
-        lambda: recover_secret(make_random_shares(4, 8)[1]),
-        number=1000) * 1000
-
-
-def test_gf256():
-    'round trip a bunch of byte strings'
-    for i in range(2, 8):
-        for j in range(i, i * 2):
-            secret = os.urandom(32)
-            shares = make_byte_shares(i, j, secret)
-            assert recover_secret_bytes(random.sample(shares, i)) == secret
-            assert recover_secret_bytes(shares) == secret
-    return 'ok'
