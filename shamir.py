@@ -11,8 +11,42 @@ the Open Web Foundation CLA 1.0
 (http://www.openwebfoundation.org/legal/the-owf-1-0-agreements/owfa-1-0)
 '''
 from __future__ import division
+import os
 import random
 import functools
+
+# GF(256) tables will be computed at import time for the byte-based API
+_GF256_EXP = [0] * 512
+_GF256_LOG = [0] * 256
+
+
+def _init_tables():
+    '''generate log and anti-log tables for GF(256)'''
+    poly = 0x11b
+
+    def mul(a, b):
+        res = 0
+        for _ in range(8):
+            if b & 1:
+                res ^= a
+            carry = a & 0x80
+            a <<= 1
+            if carry:
+                a ^= poly
+            a &= 0xff
+            b >>= 1
+        return res
+
+    x = 1
+    for i in range(255):
+        _GF256_EXP[i] = x
+        _GF256_LOG[x] = i
+        x = mul(x, 3)
+    for i in range(255, 512):
+        _GF256_EXP[i] = _GF256_EXP[i - 255]
+
+
+_init_tables()
 
 # 12th Mersenne Prime
 # (for this application we want a known prime number
@@ -24,6 +58,53 @@ _PRIME = 2**127 - 1
 # 13th Mersenne Prime is 2**521 - 1
 
 _rint = functools.partial(random.SystemRandom().randint, 0)
+
+
+def _gf256_mul(a, b):
+    'multiply two numbers in GF(256) using log tables'
+    if a == 0 or b == 0:
+        return 0
+    return _GF256_EXP[_GF256_LOG[a] + _GF256_LOG[b]]
+
+
+def _gf256_inv(a):
+    'multiplicative inverse in GF(256)'
+    if a == 0:
+        raise ZeroDivisionError('inverse of 0')
+    return _GF256_EXP[255 - _GF256_LOG[a]]
+
+
+def _gf256_div(num, den):
+    'divide in GF(256)'
+    if num == 0:
+        return 0
+    return _gf256_mul(num, _gf256_inv(den))
+
+
+def _gf256_eval_at(poly, x):
+    'evaluate polynomial with coefficients in GF(256) at x'
+    accum = 0
+    for coeff in reversed(poly):
+        accum = _gf256_mul(accum, x) ^ coeff
+    return accum
+
+
+def _gf256_lagrange_interpolate(x, x_s, y_s):
+    'lagrange interpolation at x over GF(256)'
+    k = len(x_s)
+    assert k == len(set(x_s)), 'points must be distinct'
+    result = 0
+    for i in range(k):
+        num = 1
+        den = 1
+        for j in range(k):
+            if i == j:
+                continue
+            num = _gf256_mul(num, x ^ x_s[j])
+            den = _gf256_mul(den, x_s[i] ^ x_s[j])
+        term = _gf256_mul(y_s[i], _gf256_div(num, den))
+        result ^= term
+    return result
 
 
 def _eval_at(poly, x, prime):
@@ -114,6 +195,40 @@ def recover_secret(shares, prime=_PRIME):
     return _lagrange_interpolate(0, x_s, y_s, prime)
 
 
+def make_byte_shares(minimum, shares, secret):
+    '''split a bytes object into share points using GF(256)'''
+    if minimum > shares:
+        raise ValueError('pool secret would be irrecoverable')
+    if not isinstance(secret, (bytes, bytearray)):
+        secret = bytes(secret)
+    secret = bytearray(secret)
+    polys = [
+        [b] + list(os.urandom(minimum - 1))
+        for b in secret
+    ]
+    points = []
+    for x in range(1, shares + 1):
+        share = bytearray(len(secret))
+        for idx, poly in enumerate(polys):
+            share[idx] = _gf256_eval_at(poly, x)
+        points.append((x, bytes(share)))
+    return points
+
+
+def recover_secret_bytes(shares):
+    '''recover a bytes secret from GF(256) shares'''
+    if len(shares) < 2:
+        raise ValueError('need at least two shares')
+    x_s, y_s_bytes = zip(*shares)
+    length = len(y_s_bytes[0])
+    if any(len(b) != length for b in y_s_bytes):
+        raise ValueError('inconsistent share lengths')
+    secret = bytearray(length)
+    for i in range(length):
+        secret[i] = _gf256_lagrange_interpolate(0, x_s, [b[i] for b in y_s_bytes])
+    return bytes(secret)
+
+
 def test():
     'round trip a bunch of times; returns encrypt+decrypt time in microseconds'
     for i in range(2, 20):
@@ -125,3 +240,14 @@ def test():
     return timeit.timeit(
         lambda: recover_secret(make_random_shares(4, 8)[1]),
         number=1000) * 1000
+
+
+def test_gf256():
+    'round trip a bunch of byte strings'
+    for i in range(2, 8):
+        for j in range(i, i * 2):
+            secret = os.urandom(32)
+            shares = make_byte_shares(i, j, secret)
+            assert recover_secret_bytes(random.sample(shares, i)) == secret
+            assert recover_secret_bytes(shares) == secret
+    return 'ok'
