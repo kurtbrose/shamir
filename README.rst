@@ -61,3 +61,14 @@ combined with other algorithms.  Here's a high level example:
         return decrypt(
             key=hash(hex(shamir.recover_secret(decrypted_shares))),
             ciphertext=ciphertext)
+
+byte level api
+''''''''''''''
+
+The module also provides helpers that operate on byte strings using
+GF(256).  Shares are the same length as the input data.
+
+.. code-block:: python
+
+    shares = shamir.make_byte_shares(2, 3, b'super secret')
+    assert shamir.recover_secret_bytes(shares[:2]) == b'super secret'
